@@ -1,7 +1,7 @@
 # Agda
 Agda is a dependently typed programming language based on intuitionistic type theory. It is designed for reasoning about mathematical properties of programs and proving their correctness. Here's an example of a simple program in Agda:
 
-```
+```agda
 module HelloWorld where
 
 open import Data.String
