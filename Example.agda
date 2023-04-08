@@ -1,151 +1,93 @@
-{-# OPTIONS --cubical --rewriting --postfix-projections --with-K #-}
-
 module Example where
 
-open import Prelude
-open import Closed
-open import Gluing
-open import Refine
+-- from "Dependently Typed Programming in Agda" by Ulf Norell and James Chapman
 
-record connective {ℓ ℓ′} {tp : Set ℓ} (tm : tp → Set ℓ′) (A : Set ℓ′) : Set (ℓ ⊔ ℓ′) where
-  constructor mk-connective
-  field
-    code : tp
-    dec : tm code ≅ A
+data Nat : Set where
+  zero : Nat
+  suc : Nat -> Nat
 
-open connective
+_+_ : Nat -> Nat -> Nat
+zero + m = m
+suc n + m = suc (n + m)
 
-record 𝕋 ℓ ℓ′ : Set (lsuc (ℓ ⊔ ℓ′)) where
-  field
-    tp : Set ℓ
-    tm : tp → Set ℓ′
-    sg : (A : tp) (B : tm A → tp) → connective tm (Σ[ x ∈ tm A ] tm (B x))
-    pi : (A : tp) (B : tm A → tp) → connective tm ((x : tm A) → tm (B x))
-    bool : tp
-    tt ff : tm bool
-    case : ∀ C → tm bool → tm C → tm C → tm C
-    case/tt : ∀ C (y n : tm C) → case C tt y n ≡ y
-    case/ff : ∀ C (y n : tm C) → case C ff y n ≡ n
+infixr 40 _::_
+data List (A : Set) : Set where
+  [] : List A
+  _::_ : A -> List A -> List A
 
-open 𝕋
+length : {A : Set} -> List A -> Nat
+length [] = zero
+length (x :: xs) = suc (length xs)
 
+data _∈_ {A : Set}(x : A) : List A -> Set where
+  hd : forall {xs} -> x ∈ x :: xs
+  tl : forall {y xs} -> x ∈ xs -> x ∈ y :: xs
 
+index : forall {A}{x : A}{xs} -> x ∈ xs -> Nat
+index hd = zero
+index (tl p) = suc (index p)
 
-module _ (¶ : ℙ) where
+data Lookup {A : Set}(xs : List A) : Nat -> Set where
+  inside : (x : A)(p : x ∈ xs) -> Lookup xs (index p)
+  outside : (m : Nat) -> Lookup xs (length xs + m)
 
-  ● : ∀ {ℓ} → Set ℓ → Set ℓ
-  ● A = ⌈ ¶ * A ⌉
+_!_ : {A : Set}(xs : List A)(n : Nat) -> Lookup xs n
+[] ! n = outside n
+(x :: xs) ! zero = inside x hd
+(x :: xs) ! suc n with xs ! n
+(x :: xs) ! suc .(index p) | inside y p = inside y (tl p)
+(x :: xs) ! suc .(length xs + n) | outside n = outside n
 
-  postulate 𝓜 : ¶ ⊢ 𝕋 (lsuc lzero) lzero
+infixr 30 _⇒_
+data Type : Set where
+  ı : Type
+  _⇒_ : Type -> Type -> Type
 
-  𝓜/case/tt : z ∶ ¶ ⊩ ∀ C (y n : 𝓜 z .tm C) → 𝓜 z .case C (𝓜 z .tt) y n ≡ y
-  𝓜/case/tt z = 𝓜 z .case/tt
+data Equal? : Type -> Type -> Set where
+  yes : forall {τ} -> Equal? τ τ
+  no : forall {σ τ} -> Equal? σ τ
 
-  𝓜/case/ff : z ∶ ¶ ⊩ ∀ C (y n : 𝓜 z .tm C) → 𝓜 z .case C (𝓜 z .ff) y n ≡ n
-  𝓜/case/ff z = 𝓜 z .case/ff
+_=?=_ : (σ τ : Type) -> Equal? σ τ
+ı =?= ı = yes
+ı =?= (_ ⇒ _) = no
+(_ ⇒ _) =?= ı = no
+(σ1 ⇒ τ1) =?= (σ2 ⇒ τ2) with σ1 =?= σ2 | τ1 =?= τ2
+(σ ⇒ τ) =?= (.σ ⇒ .τ) | yes | yes = yes
+(σ1 ⇒ τ1) =?= (σ2 ⇒ τ2) | _ | _ = no
 
-  {-# REWRITE 𝓜/case/tt 𝓜/case/ff #-}
+infixl 80 _$_
+data Raw : Set where
+  var : Nat -> Raw
+  _$_ : Raw -> Raw -> Raw
+  lam : Type -> Raw -> Raw
 
-  {-# NO_UNIVERSE_CHECK #-}
-  record ⟨tp*⟩ : Set (lsuc lzero) where
-    constructor mk-tp*-data
-    field
-      syn : ¶ ⊩ λ z → 𝓜 z .tp
-      ext : Set lzero [ z ∶ ¶ ⊢ tm (𝓜 z) (syn z) ]
+Cxt = List Type
+data Term (Γ : Cxt) : Type -> Set where
+  var : forall {τ} -> τ ∈ Γ -> Term Γ τ
+  _$_ : forall {σ τ} -> Term Γ (σ ⇒ τ) -> Term Γ σ -> Term Γ τ
+  lam : forall σ {τ} -> Term (σ :: Γ) τ -> Term Γ (σ ⇒ τ)
 
-  module tp* where
-    private
-      D : desc (lsuc lzero) ¶
-      desc.base D = ⟨tp*⟩
-      desc.part D =
-        λ where
-        (¶ = ⊤) →
-          𝓜 ⋆ .tp ,
-          mk-iso
-            (λ A → mk-tp*-data (λ _ → A) ⌊ 𝓜 ⋆ .tm A ⌋)
-            (λ A → ⟨tp*⟩.syn A _)
-            (λ A → refl)
-            (λ A → refl)
+erase : forall {Γ τ} -> Term Γ τ -> Raw
+erase (var x) = var (index x)
+erase (t $ u) = erase t $ erase u
+erase (lam σ t) = lam σ (erase t)
 
-    open Realign ¶ D public
+data Infer (Γ : Cxt) : Raw -> Set where
+  ok : (τ : Type)(t : Term Γ τ) -> Infer Γ (erase t)
+  bad : {e : Raw} -> Infer Γ e
 
-  tm* : tp*.tp → Set _
-  tm* A = ⌈ tp*.elim A .⟨tp*⟩.ext ⌉
-
-  mk-tp* : (syn : ¶ ⊩ λ z → 𝓜 z .tp) → Set lzero [ z ∶ ¶ ⊢ 𝓜 z .tm (syn z) ] → tp*.tp
-  mk-tp* syn ext = tp*.intro (mk-tp*-data syn ext)
-
-  module AlignConnective (E : Set) (syn : z ∶ ¶ ⊩ connective (𝓜 z .tm) E) where
-    open connective
-
-    D : desc _ ¶
-    desc.base D = E
-    desc.part D = λ where (¶ = ⊤) → 𝓜 ⋆ .tm (syn ⋆ .code) , syn ⋆ .dec
-
-    module R = Realign ¶ D
-
-    conn : connective tm* E
-    code conn = mk-tp* (λ where (¶ = ⊤) → syn ⋆ .code) ⌊ R.tp ⌋
-    dec conn = R.rules
-
-  module sg* (A : tp*.tp) (B : tm* A → tp*.tp) = AlignConnective (Σ[ x ∈ tm* A ] tm* (B x)) (λ where (¶ = ⊤) → 𝓜 ⋆ .sg A B)
-  module pi* (A : tp*.tp) (B : tm* A → tp*.tp) = AlignConnective ((x : tm* A) → tm* (B x)) (λ where (¶ = ⊤) → 𝓜 ⋆ .pi A B)
-
-  module [bool*] where
-    data val' : (z ∶ ¶ ⊩ 𝓜 z .tm (𝓜 z .bool)) → SSet lzero where
-      tt' : val' λ z → 𝓜 z .tt
-      ff' : val' λ z → 𝓜 z .ff
-
-    val : _ → Set
-    val = λ a → wrap (val' a)
-
-    pattern tt* = mk-wrap tt'
-    pattern ff* = mk-wrap ff'
-
-    open Refine.Refine ¶ (λ z → 𝓜 z .tm (𝓜 z .bool)) (λ a → ¶ * val a) public
-
-  bool* : tp*.tp
-  bool* = mk-tp* (λ z → 𝓜 z .bool) ⌊ [bool*].tp ⌋
-
-  tt* : tm* bool*
-  tt* = [bool*].intro (λ z → 𝓜 z .tt) (*/ret [bool*].tt*)
-
-  ff* : tm* bool*
-  ff* = [bool*].intro (λ z → 𝓜 z .ff) (*/ret [bool*].ff*)
-
-  case* : ∀ C (a : tm* bool*) (y : tm* C) (n : tm* C) → tm* C [ ¶ ⊢ (λ {(¶ = ⊤) → 𝓜 ⋆ .case C a y n}) ]
-  case* C a y n = aux ([bool*].unrefine a) ([bool*].refinement a)
-    where
-      aux : (syn : z ∶ ¶ ⊩ 𝓜 z .tm (𝓜 z .bool)) (sem : ● ([bool*].val syn)) → tm* C [ ¶ ⊢ (λ {(¶ = ⊤) → 𝓜 ⋆ .case C (syn ⋆) y n}) ]
-      aux syn sem =
-        unwrap ⌈
-          */ind
-           (λ _ → wrap (tm* C [ ¶ ⊢ (λ {(¶ = ⊤) → 𝓜 ⋆ .case C (syn ⋆) y n}) ]))
-           (λ {(¶ = ⊤) → mk-wrap ⌊ 𝓜 _ .case C (syn _) y n ⌋ })
-           (λ where
-            [bool*].tt* → ⌊ mk-wrap ⌊ y ⌋ ⌋
-            [bool*].ff* → ⌊ mk-wrap ⌊ n ⌋ ⌋)
-           sem
-        ⌉
-
-  replace-boundary : ∀ {ℓ} {A : Set ℓ} {a b : ¶ ⊢ A} (p : z ∶ ¶ ⊩ (a z ≡ b z)) → A [ ¶ ⊢ a ] → A [ ¶ ⊢ b ]
-  replace-boundary {ℓ} {A} p h = unwrap (coe (λ x → wrap (A [ ¶ ⊢ unwrap x ])) (⊢-ext p) (mk-wrap h))
-
-  correct-eq : {A : Set} {a b : A} (p : a ≡ b) (q : ¶ ⊢ (a ≡ b)) → (a ≡ b) [ ¶ ⊢ q ]
-  correct-eq p q = replace-boundary (λ z → uip p (q z)) ⌊ p ⌋
-
-
-  𝓜* : 𝕋 _ _ [ ¶ ⊢ 𝓜 ]
-  𝓜* = ⌊ M ⌋
-    where
-      M : 𝕋 _ _
-      M .tp = tp*.tp
-      M .tm = tm*
-      M .sg = sg*.conn
-      M .pi = pi*.conn
-      M .bool = bool*
-      M .tt = tt*
-      M .ff = ff*
-      M .case C a y n = ⌈ case* C a y n ⌉
-      M .case/tt C y n = ⌈ correct-eq refl (λ {(¶ = ⊤) → 𝓜 ⋆ .case/tt C y n}) ⌉
-      M .case/ff C y n = ⌈ correct-eq refl (λ {(¶ = ⊤) → 𝓜 ⋆ .case/ff C y n}) ⌉
+infer : (Γ : Cxt)(e : Raw) -> Infer Γ e
+infer Γ (var n) with Γ ! n
+infer Γ (var .(length Γ + n)) | outside n = bad
+infer Γ (var .(index x)) | inside σ x = ok σ (var x)
+infer Γ (e1 $ e2) with infer Γ e1
+infer Γ (e1 $ e2) | bad = bad
+infer Γ (.(erase t1) $ e2) | ok ı t1 = bad
+infer Γ (.(erase t1) $ e2) | ok (σ ⇒ τ) t1 with infer Γ e2
+infer Γ (.(erase t1) $ e2) | ok (σ ⇒ τ) t1 | bad = bad
+infer Γ (.(erase t1) $ .(erase t2)) | ok (σ ⇒ τ) t1 | ok σ’ t2 with σ =?= σ’
+infer Γ (.(erase t1) $ .(erase t2)) | ok (σ ⇒ τ) t1 | ok .σ t2 | yes = ok τ (t1 $ t2)
+infer Γ (.(erase t1) $ .(erase t2)) | ok (σ ⇒ τ) t1 | ok σ’ t2 | no = bad
+infer Γ (lam σ e) with infer (σ :: Γ) e
+infer Γ (lam σ .(erase t)) | ok τ t = ok (σ ⇒ τ) (lam σ t)
+infer Γ (lam σ e) | bad = bad
